@@ -14,13 +14,6 @@ A fast, feature-rich Entity Component System for Roblox.
 
 ## Installation
 
-### Wally
-
-```toml
-[dependencies]
-AlloyECS = "lithh/alloyecs@1.0.0"
-```
-
 ### Manual
 
 Download the latest release and add the `src` folder to your project.
@@ -46,10 +39,6 @@ for id, pos, vel in world:query(Position, Velocity) do
     world:set(id, Position, pos + vel)
 end
 ```
-
-## Documentation
-
-See the full documentation at [https://lithh.github.io/AlloyECS](https://lithh.github.io/AlloyECS)
 
 ## License
 
