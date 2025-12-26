@@ -1,0 +1,13 @@
+[package]
+name = "alloy-ecs/alloy-ecs"
+description = "A lightweight Entity Component System library"
+version = "0.1.0"
+license = "MIT"
+authors = ["LithHash"]
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+exclude = ["tests", "docs", "benchmarks", "examples", "Packages", ".github"]
+
+[dependencies]
+
+[dev-dependencies]
