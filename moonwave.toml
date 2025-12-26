@@ -1,28 +1,27 @@
 title = "AlloyECS"
-gitRepoUrl = "https://github.com/lithh/AlloyECS"
+gitRepoUrl = "https://github.com/LithHash/AlloyECS"
 
 gitSourceBranch = "main"
 changelog = true
 classOrder = ["AlloyECS", "World"]
 
 [docusaurus]
-organizationName = "lithh"
+organizationName = "LithHash"
 projectName = "AlloyECS"
-url = "https://lithh.github.io"
-baseUrl = "/AlloyECS/"
+baseUrl = "/AlloyECS"
 tagline = "A fast, feature-rich Entity Component System for Roblox"
 
 [navbar]
 title = "AlloyECS"
 
 [[navbar.items]]
-href = "https://github.com/lithh/AlloyECS"
+href = "https://github.com/LithHash/AlloyECS"
 label = "GitHub"
 position = "right"
 
 [footer]
 style = "dark"
-copyright = "Copyright © 2025 lithh. Built with Moonwave and Docusaurus."
+copyright = "Copyright © 2025 LithHash. Built with Moonwave and Docusaurus."
 
 [[footer.links]]
 title = "Documentation"
@@ -40,7 +39,7 @@ title = "Community"
 
 [[footer.links.items]]
 label = "GitHub"
-href = "https://github.com/lithh/AlloyECS"
+href = "https://github.com/LithHash/AlloyECS"
 
 [home]
 enabled = true
