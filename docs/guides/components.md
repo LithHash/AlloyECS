@@ -18,12 +18,12 @@ Each call to `component()` returns a unique component ID (a number).
 
 ## Storage Types
 
-AlloyECS supports three storage types optimized for different use cases:
+AlloyECS supports different storage types optimized for different use cases:
 
 | Type | Description | Best For |
 |------|-------------|----------|
 | `sparse` | Default, hash-map based | Most components |
-| `dense` | Array-based | Components on 50%+ of entities |
+| `dense` | *(Coming soon)* Array-based | Components on 50%+ of entities |
 | `tag` | No data storage | Boolean flags |
 
 ```lua
@@ -31,12 +31,13 @@ AlloyECS supports three storage types optimized for different use cases:
 local Position = world:component()
 local Position = world:component({ storage = "sparse" })
 
--- Dense - optimized for common components
-local Transform = world:component({ storage = "dense" })
-
 -- Tag - no data, just presence
 local Visible = world:component({ storage = "tag" })
 ```
+
+:::note Dense Storage
+Dense storage is planned for a future release. For now, use `sparse` (the default).
+:::
 
 ## Tags
 

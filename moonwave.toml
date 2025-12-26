@@ -1,0 +1,59 @@
+title = "AlloyECS"
+gitRepoUrl = "https://github.com/lithh/AlloyECS"
+
+gitSourceBranch = "main"
+changelog = true
+classOrder = ["AlloyECS", "World"]
+
+[docusaurus]
+organizationName = "lithh"
+projectName = "AlloyECS"
+url = "https://lithh.github.io"
+baseUrl = "/AlloyECS/"
+tagline = "A fast, feature-rich Entity Component System for Roblox"
+
+[navbar]
+title = "AlloyECS"
+
+[[navbar.items]]
+href = "https://github.com/lithh/AlloyECS"
+label = "GitHub"
+position = "right"
+
+[footer]
+style = "dark"
+copyright = "Copyright © 2025 lithh. Built with Moonwave and Docusaurus."
+
+[[footer.links]]
+title = "Documentation"
+
+[[footer.links.items]]
+label = "Getting Started"
+to = "docs/getting-started"
+
+[[footer.links.items]]
+label = "API Reference"
+to = "api/AlloyECS"
+
+[[footer.links]]
+title = "Community"
+
+[[footer.links.items]]
+label = "GitHub"
+href = "https://github.com/lithh/AlloyECS"
+
+[home]
+enabled = true
+includeReadme = false
+
+[[home.features]]
+title = "High Performance"
+description = "Bitset-based queries with automatic caching for blazing fast iteration."
+
+[[home.features]]
+title = "Feature Rich"
+description = "Relationships, prefabs, change tracking, system scheduling, and more."
+
+[[home.features]]
+title = "Type Safe"
+description = "Full Luau strict mode support with proper type exports."

@@ -530,7 +530,7 @@ end
 	| Storage Type | Description | Use Case |
 	|--------------|-------------|----------|
 	| `"sparse"` | Standard component with data (default) | Most components |
-	| `"dense"` | Optimized for components on most entities | Components on 50%+ entities |
+	| `"dense"` | *(Coming soon)* Optimized for components on most entities | Components on 50%+ entities |
 	| `"tag"` | No data, just marks entities | Flags like `Player`, `Enemy` |
 
 	:::tip Tags
