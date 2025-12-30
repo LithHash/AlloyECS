@@ -1,0 +1,24 @@
+name = "lithhash/alloyecs"
+version = "0.1.0"
+description = "A fast, feature-rich Entity Component System for Roblox."
+authors = ["LithHash"]
+repository = "https://github.com/LithHash/AlloyECS"
+license = "MIT"
+
+[target]
+environment = "luau"
+
+[indices]
+default = "https://github.com/pesde-pkg/index"
+
+[scripts]
+roblox_sync_config_generator = ".pesde/scripts/roblox_sync_config_generator.luau"
+sourcemap_generator = ".pesde/scripts/sourcemap_generator.luau"
+
+[dev_dependencies]
+scripts = { name = "pesde/scripts_rojo", version = "^0.2.0", target = "lune" }
+rojo = { name = "pesde/rojo", version = "^7.5.1", target = "lune" }
+
+[engines]
+pesde = "^0.7.0"
+lune = "^0.10.2"

@@ -1322,7 +1322,7 @@ local function iter(builder: QueryBuilderData): QueryIterator
 			if index > entityCount then
 				return nil
 			end
-            
+
 			local eid = entities[index]
 			local comps = entityComponents[eid]
 			local val1 = if isTag1 then nil else comps[comp1]
