@@ -1,14 +1,15 @@
 name = "lithhash/alloyecs"
-version = "0.1.1"
+version = "0.1.2"
 description = "A fast, feature-rich Entity Component System for Roblox."
 authors = ["LithHash"]
 repository = "https://github.com/LithHash/AlloyECS"
 license = "MIT"
+includes = ["src/*", "README.md", "pesde.toml"]
 
 [target]
 environment = "roblox"
-lib = "src/init.luau"
 build_files = ["src"]
+lib = "src/init.luau"
 
 [indices]
 default = "https://github.com/pesde-pkg/index"
