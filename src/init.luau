@@ -470,5 +470,5 @@ local function world(): World
 end
 
 return {
-	world = world
+	world = world,
 }
