@@ -1,232 +1,474 @@
+--!optimize 2
+--!native
 --!strict
-export type EntityId = number
+
 export type ComponentId = number
+export type EntityId = number
 
-export type EntityData = {
+export type Component = {
+	sparse: {[EntityId]: number},
+	dense: {[number]: any},
+	entities: {[number]: EntityId}
+}
+
+export type ComponentMask = {[ComponentId]: boolean}
+
+export type View = {
+	forEach: (self: View, fn: (...any) -> ()) -> (),
+	exclude: (self: View, ...ComponentId) -> View,
+	count: (self: View) -> number,
+	entities: (self: View) -> {EntityId},
+	empty: (self: View) -> boolean,
+}
+
+export type EntityHandle = {
 	id: EntityId,
-	components: {[ComponentId]: true}
+	world: World,
+
+	assign: (self: EntityHandle, component: ComponentId, value: any) -> EntityHandle,
+	attach: (self: EntityHandle, component: ComponentId) -> EntityHandle,
+	remove: (self: EntityHandle, component: ComponentId) -> EntityHandle,
+	destroy: (self: EntityHandle) -> (),
+	read: (self: EntityHandle, component: ComponentId) -> any,
+	has: (self: EntityHandle, component: ComponentId) -> boolean,
+	update: (self: EntityHandle, component: ComponentId, fn: (any) -> any) -> EntityHandle,
 }
 
-export type QueryResult = (EntityId, ...any) -> ()
-export type Query = {
-	with: {ComponentId},
-	without: {ComponentId}?
-}
-
-export type InternalState = {
-	entityCache: {[EntityId]: EntityData},
-	componentMap: {[ComponentId]: {[EntityId]: any}},
+export type World = {
 	nextEntityId: number,
 	nextComponentId: number,
+	openEntityIds: {EntityId},
+	components: {[ComponentId]: Component},
+	entities: {[EntityId]: ComponentMask},
+
+	component: (self: World) -> ComponentId,
+	entity: (self: World) -> EntityHandle,
+
+	destroy: (self: World, entity: EntityId) -> (),
+	exists: (self: World, entity: EntityId) -> boolean,
+
+	assign: (self: World, entity: EntityId, component: ComponentId, value: any) -> (),
+	attach: (self: World, entity: EntityId, component: ComponentId) -> (),
+	remove: (self: World, entity: EntityId, component: ComponentId) -> (),
+	read: (self: World, entity: EntityId, component: ComponentId) -> any,
+	has: (self: World, entity: EntityId, component: ComponentId) -> boolean,
+	update: (self: World, entity: EntityId, component: ComponentId, fn: (any) -> any) -> (),
+
+	view: (self: World, ...ComponentId) -> View,
 }
 
-local entityCache: {[EntityId]: EntityData} = {}
-local componentMap: {[ComponentId]: {[EntityId]: any}} = {}
+local function createComponent(self: World): ComponentId
+	local component: Component = {
+		sparse = {},
+		dense = {},
+		entities = {}
+	}
 
-local nextEntityId: number = 0
-local nextComponentId: number = 0
+	local componentId = self.nextComponentId
+	self.components[componentId] = component
+	self.nextComponentId += 1
 
-local function attachComponent(entityId: EntityId, componentId: ComponentId, value: any)
-	local entity = entityCache[entityId]
-	assert(entity, '[AlloyECS] Failed to fetch entity data for entity ID: '.. entityId)
-
-	local componentData = componentMap[componentId]
-	assert(componentData, '[AlloyECS] Failed to fetch component map for component ID: '.. componentId)
-
-	entity.components[componentId] = true
-	componentMap[componentId][entityId] = value
+	return componentId
 end
 
-local function set(entityId: EntityId, componentId: ComponentId, value: any)
-	attachComponent(entityId, componentId, value)
+local function createEntity(self: World): EntityHandle
+	local entityId: number
+
+	if next(self.openEntityIds) then
+		entityId = self.openEntityIds[1]
+		table.remove(self.openEntityIds, 1)
+	else
+		entityId = self.nextEntityId
+		self.nextEntityId += 1
+	end
+
+	self.entities[entityId] = {}
+
+	return {
+		id = entityId,
+		world = self,
+
+		assign = function(handle: EntityHandle, component: ComponentId, value: any): EntityHandle
+			self:assign(entityId, component, value)
+			return handle
+		end,
+
+		attach = function(handle: EntityHandle, component: ComponentId): EntityHandle
+			self:attach(entityId, component)
+			return handle
+		end,
+
+		remove = function(handle: EntityHandle, component: ComponentId): EntityHandle
+			self:remove(entityId, component)
+			return handle
+		end,
+
+		destroy = function(handle: EntityHandle)
+			self:destroy(entityId)
+		end,
+
+		read = function(handle: EntityHandle, component: ComponentId): any
+			return self:read(entityId, component)
+		end,
+
+		has = function(handle: EntityHandle, component: ComponentId): boolean
+			return self:has(entityId, component)
+		end,
+
+		update = function(handle: EntityHandle, component: ComponentId, fn: (any) -> any): EntityHandle
+			self:update(entityId, component, fn)
+			return handle
+		end,
+	} :: EntityHandle
 end
 
-local function add(entityId: EntityId, componentId: ComponentId)
-	attachComponent(entityId, componentId, true)
+local function destroyEntity(self: World, entity: EntityId)
+	local entityData = self.entities[entity]
+	if not entityData then
+		return
+	end
+
+	for component in entityData do
+		local componentData = self.components[component]
+		if not componentData then
+			continue
+		end
+
+		local denseIndex = componentData.sparse[entity]
+		local denseSize = #componentData.dense
+		local lastEntity = componentData.entities[denseSize]
+
+		if denseIndex ~= denseSize then
+			componentData.dense[denseIndex] = componentData.dense[denseSize]
+			componentData.entities[denseIndex] = lastEntity
+			componentData.sparse[lastEntity] = denseIndex
+		end
+
+		componentData.dense[denseSize] = nil
+		componentData.entities[denseSize] = nil
+		componentData.sparse[entity] = nil
+	end
+
+	self.entities[entity] = nil
+	table.insert(self.openEntityIds, entity)
 end
 
-local function get(entityId: EntityId, componentId: ComponentId): unknown
-	local componentData = componentMap[componentId]
-	if componentData[entityId] == nil then
+local function read(self: World, entity: EntityId, component: ComponentId): any
+	local componentData = self.components[component]
+	assert(componentData, "componentData not found for: ".. component)
+
+	local denseIndex = componentData.sparse[entity]
+	if not denseIndex then
 		return nil
 	end
 
-	return componentData[entityId]
+	return componentData.dense[denseIndex]
 end
 
-local function has(entityId: EntityId, componentId: ComponentId): boolean
-	local componentData = componentMap[componentId]
-	return componentData[entityId] ~= nil
+local function has(self: World, entity: EntityId, component: ComponentId): boolean
+	local mask = self.entities[entity]
+	return mask and mask[component] ~= nil
 end
 
-local function exists(entityId: EntityId): boolean
-	return entityCache[entityId] ~= nil
-end
+local function remove(self: World, entity: EntityId, component: ComponentId)
+	local componentData = self.components[component]
+	assert(componentData, "componentData not found for: ".. component)
 
-local function remove(entityId: EntityId, componentId: ComponentId)
-	local entity = entityCache[entityId]
-	assert(entity, '[AlloyECS] Failed to fetch entity data for entity ID: '.. entityId)
-
-	local componentData = componentMap[componentId]
-	assert(componentData, '[AlloyECS] Failed to fetch component map for component ID: '.. componentId)
-
-	if not entity.components[componentId] then
+	local denseIndex = componentData.sparse[entity]
+	if not denseIndex then
 		return
 	end
 
-	entity.components[componentId] = nil
-	componentData[entityId] = nil
+	local denseSize = #componentData.dense
+	local lastEntity = componentData.entities[denseSize]
+
+	if denseIndex ~= denseSize then
+		componentData.dense[denseIndex] = componentData.dense[denseSize]
+		componentData.entities[denseIndex] = lastEntity
+		componentData.sparse[lastEntity] = denseIndex
+	end
+
+	componentData.dense[denseSize] = nil
+	componentData.entities[denseSize] = nil
+	componentData.sparse[entity] = nil
+
+	self.entities[entity][component] = nil
 end
 
-local function query(queryParams: Query): () -> QueryResult
-	local requiredComponents = queryParams.with
-	local excludedComponents = queryParams.without or {}
-	local numRequired = #requiredComponents
-	local numExcluded = #excludedComponents
+local function assign(self: World, entity: EntityId, component: ComponentId, value: any)
+	local componentData = self.components[component]
+	assert(componentData, "componentData not found for: ".. component)
 
-	assert(numRequired > 0, "[AlloyECS] Query must have at least one 'with' component")
-
-	local requiredComponentMaps = table.create(numRequired)
-	for i = 1, numRequired do
-		local componentId = requiredComponents[i]
-		local componentData = componentMap[componentId]
-		assert(componentData, "[AlloyECS] Component does not exist")
-
-		requiredComponentMaps[i] = componentData
+	if self.entities[entity][component] then
+		componentData.dense[componentData.sparse[entity]] = value
+		return
 	end
 
-	local excludedEntitySet = {}
-	if numExcluded > 0 then
-		for i = 1, numExcluded do
-			local excludedComponentData = componentMap[excludedComponents[i]]
-			if not excludedComponentData then
-				continue
-			end
+	self.entities[entity][component] = true
 
-			for entityId in pairs(excludedComponentData) do
-				excludedEntitySet[entityId] = true
-			end
+	local denseIndex = #componentData.dense + 1
+	componentData.sparse[entity] = denseIndex
+	componentData.dense[denseIndex] = value
+	componentData.entities[denseIndex] = entity
+end
+
+local function attach(self: World, entity: EntityId, component: ComponentId)
+	local componentData = self.components[component]
+	assert(componentData, "componentData not found for: ".. component)
+
+	if self.entities[entity][component] then
+		return
+	end
+
+	self.entities[entity][component] = true
+
+	local denseIndex = #componentData.entities + 1
+	componentData.sparse[entity] = denseIndex
+	componentData.dense[denseIndex] = true
+	table.insert(componentData.entities, entity)
+end
+
+local function update(self: World, entity: EntityId, component: ComponentId, fn: (any) -> any)
+	local componentData = self.components[component]
+	assert(componentData, "componentData not found for: ".. component)
+
+	local denseIndex = componentData.sparse[entity]
+	assert(denseIndex, "Entity does not have component: ".. component)
+
+	local currentValue = componentData.dense[denseIndex]
+	local newValue = fn(currentValue)
+	componentData.dense[denseIndex] = newValue
+end
+
+local function exists(self: World, entity: EntityId): boolean
+	return self.entities[entity] ~= nil
+end
+
+local function createView(self: World, ...: ComponentId)
+	local componentIds = {...}
+	local numComponents = #componentIds
+
+	assert(numComponents > 0, "View must have at least one component")
+
+	local componentPools = table.create(numComponents):: {Component}
+	local smallestPool: Component = nil :: any
+	local smallestSize = math.huge
+
+	for i, componentId in componentIds do
+		local componentData = self.components[componentId]
+		assert(componentData, "Component does not exist: ".. componentId)
+
+		componentPools[i] = componentData
+		local size = #componentData.entities
+		if size < smallestSize then
+			smallestSize = size
+			smallestPool = componentData
 		end
 	end
 
-	local baseComponentData = requiredComponentMaps[1]
-	local smallestMapSize = math.huge
+	local excludedComponents: {ComponentId} = {}
+	local excludedPools: {Component} = {}
+	local world = self
 
-	for i = 1, numRequired do
-		local currentComponentData = requiredComponentMaps[i]
-		local currentSize = 0
+	local view = {} :: View
 
-		for _ in pairs(currentComponentData:: any) do
-			currentSize += 1
-			if currentSize >= smallestMapSize then
-				break
-			end
-		end
+	function view:forEach(fn: (...any) -> ())
+		local numExclusions = #excludedPools
+		local entities = smallestPool.entities
+		local entitiesCount = #entities
 
-		if currentSize < smallestMapSize and currentSize > 0 then
-			smallestMapSize = currentSize
-			baseComponentData = currentComponentData
-		end
-	end
+		if numComponents == 1 then
+			local pool = componentPools[1]
+			local dense = pool.dense
 
-	local iteratorFunc, iteratorTable, iteratorState = pairs(baseComponentData:: any)
-
-	return function()
-		while true do
-			local entityId = iteratorFunc(iteratorTable, iteratorState)
-			iteratorState = entityId
-
-			if entityId == nil then
-				return nil:: any
-			end
-
-			if excludedEntitySet[entityId] then
-				continue
-			end
-
-			local componentValues = table.create(numRequired)
-			local hasAllRequired = true
-
-			for i = 1, numRequired do
-				local value = (requiredComponentMaps[i]:: any)[entityId]
-				if value == nil then
-					hasAllRequired = false
-					break
+			if numExclusions == 0 then
+				for i = 1, entitiesCount do
+					fn(entities[i], dense[i])
 				end
-				componentValues[i] = value
-			end
+			else
+				for i = 1, entitiesCount do
+					local entity = entities[i]
+					local isExcluded = false
 
-			if hasAllRequired then
-				return entityId, table.unpack(componentValues, 1, numRequired)
+					for j = 1, numExclusions do
+						if excludedPools[j].sparse[entity] then
+							isExcluded = true
+							break
+						end
+					end
+
+					if not isExcluded then
+						fn(entity, dense[i])
+					end
+				end
+			end
+			return
+		end
+
+		local components = table.create(numComponents)
+
+		if numExclusions == 0 then
+			for i = 1, entitiesCount do
+				local entity = entities[i]
+				local hasAll = true
+
+				for j = 1, numComponents do
+					local pool = componentPools[j]
+					local denseIndex = pool.sparse[entity]
+
+					if not denseIndex then
+						hasAll = false
+						break
+					end
+
+					components[j] = pool.dense[denseIndex]
+				end
+
+				if hasAll then
+					fn(entity, table.unpack(components, 1, numComponents))
+				end
+			end
+		else
+			for i = 1, entitiesCount do
+				local entity = entities[i]
+				local isExcluded = false
+
+				for j = 1, numExclusions do
+					if excludedPools[j].sparse[entity] then
+						isExcluded = true
+						break
+					end
+				end
+
+				if isExcluded then
+					continue
+				end
+
+				local hasAll = true
+
+				for j = 1, numComponents do
+					local pool = componentPools[j]
+					local denseIndex = pool.sparse[entity]
+
+					if not denseIndex then
+						hasAll = false
+						break
+					end
+
+					components[j] = pool.dense[denseIndex]
+				end
+
+				if hasAll then
+					fn(entity, table.unpack(components, 1, numComponents))
+				end
 			end
 		end
 	end
-end
 
-local function destroyEntity(entityId: EntityId)
-	local entity = entityCache[entityId]
-	if not entity then
-		return
+	function view:exclude(...: ComponentId): View
+		local exclusions = {...}
+		for _, componentId in exclusions do
+			table.insert(excludedComponents, componentId)
+			local pool = world.components[componentId]
+			if pool then
+				table.insert(excludedPools, pool)
+			end
+		end
+		return view
 	end
 
-	for componentId in entity.components do
-		remove(entityId, componentId)
+	function view:entities(): {EntityId}
+		local result: {EntityId} = {}
+		local numExclusions = #excludedPools
+		local entities = smallestPool.entities
+		local entitiesCount = #entities
+
+		if numExclusions == 0 then
+			if numComponents == 1 then
+				return entities
+			end
+
+			for i = 1, entitiesCount do
+				local entity = entities[i]
+				local hasAll = true
+
+				for j = 1, numComponents do
+					if not componentPools[j].sparse[entity] then
+						hasAll = false
+						break
+					end
+				end
+
+				if hasAll then
+					table.insert(result, entity)
+				end
+			end
+		else
+			for i = 1, entitiesCount do
+				local entity = entities[i]
+				local isExcluded = false
+
+				for j = 1, numExclusions do
+					if excludedPools[j].sparse[entity] then
+						isExcluded = true
+						break
+					end
+				end
+
+				if not isExcluded then
+					local hasAll = true
+
+					for j = 1, numComponents do
+						if not componentPools[j].sparse[entity] then
+							hasAll = false
+							break
+						end
+					end
+
+					if hasAll then
+						table.insert(result, entity)
+					end
+				end
+			end
+		end
+
+		return result
 	end
 
-	entityCache[entityId] = nil
+	function view:empty(): boolean
+		return view:count() == 0
+	end
+
+	return view
 end
 
-local function createEntity(): EntityId
-	nextEntityId += 1
-	local newEntityId = nextEntityId
+local function world(): World
+	local self: World = {
+		nextEntityId = 1,
+		nextComponentId = 1,
+		openEntityIds = {},
+		components = {},
+		entities = {},
 
-	local entity: EntityData = {
-		id = newEntityId,
-		components = {}
-	}
+		component = createComponent,
+		entity = createEntity,
+		destroy = destroyEntity,
 
-	entityCache[newEntityId] = entity
+		read = read,
+		has = has,
+		exists = exists,
 
-	return newEntityId
-end
+		remove = remove,
+		attach = attach,
+		assign = assign,
+		update = update,
 
-local function createComponent(): ComponentId
-	local newComponentId = nextComponentId + 1
-	nextComponentId = newComponentId
+		view = createView,
+	} :: World
 
-	componentMap[newComponentId] = {}
-
-	return newComponentId
-end
-
-local function clear()
-	table.clear(entityCache)
-	table.clear(componentMap)
-	nextEntityId = 0
-	nextComponentId = 0
-end
-
-local function getInternalState(): InternalState
-	return {
-		entityCache = entityCache,
-		componentMap = componentMap,
-		nextEntityId = nextEntityId,
-		nextComponentId = nextComponentId,
-	}
+	return self
 end
 
 return {
-	entity = createEntity,
-	component = createComponent,
-	get = get,
-	set = set,
-	add = add,
-	has = has,
-	exists = exists,
-	remove = remove,
-	destroy = destroyEntity,
-	query = query,
-	clear = clear,
-
-	_internal = getInternalState,
+	world = world
 }
