@@ -1,5 +1,5 @@
 name = "lithhash/alloyecs"
-version = "0.1.21"
+version = "0.1.22"
 description = "A fast, feature-rich Entity Component System for Roblox."
 authors = ["LithHash"]
 repository = "https://github.com/LithHash/AlloyECS"
