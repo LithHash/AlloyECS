@@ -1,10 +1,8 @@
 /.luaurc
 /default.project.json
-/rokit.toml
 /selene.toml
 /sourcemap.json
 /stylua.toml
-/tests
 /build
 /.pesde
 /luau_packages

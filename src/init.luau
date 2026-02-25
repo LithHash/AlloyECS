@@ -3,6 +3,9 @@
 --!strict
 
 export type ComponentId<T> = number & { __phantom: T }
+export type DataComponentId<T> = ComponentId<T> & { __kind: "data" }
+export type TagComponentId = ComponentId<true> & { __kind: "tag" }
+export type AnyComponentId = DataComponentId<any> | TagComponentId
 export type EntityId = number
 
 export type Component = {
@@ -13,12 +16,12 @@ export type Component = {
 
 export type ComponentMask = { [number]: boolean }
 
-export type View = {
-	forEach: (self: View, fn: (...any) -> ()) -> (),
-	exclude: (self: View, ...ComponentId<any>) -> View,
-	count: (self: View) -> number,
-	entities: (self: View) -> { EntityId },
-	empty: (self: View) -> boolean,
+export type View<T...> = {
+	forEach: (self: View<T...>, fn: (EntityId, T...) -> ()) -> (),
+	exclude: (self: View<T...>, ...AnyComponentId) -> View<T...>,
+	count: (self: View<T...>) -> number,
+	entities: (self: View<T...>) -> { EntityId },
+	empty: (self: View<T...>) -> boolean,
 }
 
 export type World = {
@@ -28,24 +31,89 @@ export type World = {
 	components: { [number]: Component },
 	entities: { [EntityId]: ComponentMask },
 
-	component: <T>(self: World) -> ComponentId<T>,
+	component: <T>(self: World) -> DataComponentId<T>,
+	tag: (self: World) -> TagComponentId,
 	entity: (self: World) -> EntityId,
 	destroy: (self: World, entity: EntityId) -> (),
 	exists: (self: World, entity: EntityId) -> boolean,
-	assign: <T>(self: World, entity: EntityId, component: ComponentId<T>, value: T) -> (),
-	attach: <T>(self: World, entity: EntityId, component: ComponentId<T>) -> (),
+	assign: <T>(self: World, entity: EntityId, component: DataComponentId<T>, value: T) -> (),
+	attach: (self: World, entity: EntityId, component: TagComponentId) -> (),
 	remove: <T>(self: World, entity: EntityId, component: ComponentId<T>) -> (),
 	read: <T>(self: World, entity: EntityId, component: ComponentId<T>) -> T?,
 	has: <T>(self: World, entity: EntityId, component: ComponentId<T>) -> boolean,
-	update: <T>(self: World, entity: EntityId, component: ComponentId<T>, fn: (T) -> T) -> (),
-	view: (self: World, ...ComponentId<any>) -> View,
+	update: <T>(
+		self: World,
+		entity: EntityId,
+		component: DataComponentId<T>,
+		fn: (T) -> T
+	) -> (),
+	view:
+		& (<A>(self: World, componentA: ComponentId<A>) -> View<A>)
+		& (<A, B>(self: World, componentA: ComponentId<A>, componentB: ComponentId<B>) -> View<A, B>)
+		& (<A, B, C>(
+			self: World,
+			componentA: ComponentId<A>,
+			componentB: ComponentId<B>,
+			componentC: ComponentId<C>
+		) -> View<A, B, C>)
+		& (<A, B, C, D>(
+			self: World,
+			componentA: ComponentId<A>,
+			componentB: ComponentId<B>,
+			componentC: ComponentId<C>,
+			componentD: ComponentId<D>
+		) -> View<A, B, C, D>)
+		& (<A, B, C, D, E>(
+			self: World,
+			componentA: ComponentId<A>,
+			componentB: ComponentId<B>,
+			componentC: ComponentId<C>,
+			componentD: ComponentId<D>,
+			componentE: ComponentId<E>
+		) -> View<A, B, C, D, E>)
+		& (<A, B, C, D, E, F>(
+			self: World,
+			componentA: ComponentId<A>,
+			componentB: ComponentId<B>,
+			componentC: ComponentId<C>,
+			componentD: ComponentId<D>,
+			componentE: ComponentId<E>,
+			componentF: ComponentId<F>
+		) -> View<A, B, C, D, E, F>)
+		& (<A, B, C, D, E, F, G>(
+			self: World,
+			componentA: ComponentId<A>,
+			componentB: ComponentId<B>,
+			componentC: ComponentId<C>,
+			componentD: ComponentId<D>,
+			componentE: ComponentId<E>,
+			componentF: ComponentId<F>,
+			componentG: ComponentId<G>
+		) -> View<A, B, C, D, E, F, G>)
+		& (<A, B, C, D, E, F, G, H>(
+			self: World,
+			componentA: ComponentId<A>,
+			componentB: ComponentId<B>,
+			componentC: ComponentId<C>,
+			componentD: ComponentId<D>,
+			componentE: ComponentId<E>,
+			componentF: ComponentId<F>,
+			componentG: ComponentId<G>,
+			componentH: ComponentId<H>
+		) -> View<A, B, C, D, E, F, G, H>)
+		& (<T...>(self: World, ...ComponentId<any>) -> View<T...>),
 
-	onAssign: (self: World, component: number, fn: (entity: number, value: any) -> ()) -> () -> (),
-	onRemove: (self: World, component: number, fn: (entity: number) -> ()) -> () -> (),
-	onDestroy: (self: World, fn: (entity: number) -> ()) -> () -> (),
+	onAssign: <T>(
+		self: World,
+		component: ComponentId<T>,
+		fn: (entity: EntityId, value: T) -> ()
+	) -> () -> (),
+	onRemove: <T>(self: World, component: ComponentId<T>, fn: (entity: EntityId) -> ()) -> () -> (),
+	onDestroy: (self: World, fn: (entity: EntityId) -> ()) -> () -> (),
 	flush: (self: World) -> (),
 }
 
+type ComponentKind = "data" | "tag"
 type SignalBucket = { [number]: (...any) -> () }
 
 type QueuedEvent = {
@@ -59,6 +127,7 @@ type WorldInternal = {
 	nextComponentId: number,
 	openEntityIds: { EntityId },
 	components: { [number]: Component },
+	componentKinds: { [number]: ComponentKind },
 	entities: { [EntityId]: ComponentMask },
 	_assignSignals: { [number]: SignalBucket },
 	_removeSignals: { [number]: SignalBucket },
@@ -79,6 +148,18 @@ local function queueEvent(self: WorldInternal, bucket: SignalBucket, entity: num
 	queue[#queue + 1] = { bucket = bucket, entity = entity, value = value }
 end
 
+local function getComponentData(internal: WorldInternal, component: number): Component
+	local componentData = internal.components[component]
+	assert(componentData, "componentData not found for: " .. tostring(component))
+	return componentData
+end
+
+local function getComponentKind(internal: WorldInternal, component: number): ComponentKind
+	local kind = internal.componentKinds[component]
+	assert(kind, "component kind not found for: " .. tostring(component))
+	return kind :: ComponentKind
+end
+
 local function flush(self: World)
 	local internal = self :: any
 	local queue: { QueuedEvent } = internal._queue
@@ -90,9 +171,9 @@ local function flush(self: World)
 	for i = 1, count do
 		local event = queue[i]
 		for _, fn in event.bucket do
-			local ok, err = pcall(fn, event.entity, event.value)
+			local ok = pcall(fn, event.entity, event.value)
 			if not ok then
-				warn(err)
+				print("AlloyECS observer callback failed")
 			end
 		end
 
@@ -100,7 +181,7 @@ local function flush(self: World)
 	end
 end
 
-local function createComponent<T>(self: World): ComponentId<T>
+local function createComponent<T>(self: World): DataComponentId<T>
 	local internal = self :: any
 	local component: Component = {
 		sparse = {},
@@ -110,9 +191,26 @@ local function createComponent<T>(self: World): ComponentId<T>
 
 	local componentId = internal.nextComponentId
 	internal.components[componentId] = component
+	internal.componentKinds[componentId] = "data"
 	internal.nextComponentId += 1
 
-	return componentId :: ComponentId<T>
+	return componentId :: DataComponentId<T>
+end
+
+local function createTag(self: World): TagComponentId
+	local internal = self :: any
+	local component: Component = {
+		sparse = {},
+		dense = {},
+		entities = {},
+	}
+
+	local componentId = internal.nextComponentId
+	internal.components[componentId] = component
+	internal.componentKinds[componentId] = "tag"
+	internal.nextComponentId += 1
+
+	return componentId :: TagComponentId
 end
 
 local function createEntity(self: World): EntityId
@@ -180,8 +278,7 @@ end
 
 local function read<T>(self: World, entity: EntityId, component: ComponentId<T>): T?
 	local internal = self :: any
-	local componentData = internal.components[component]
-	assert(componentData, "componentData not found for: " .. component:: any)
+	local componentData = getComponentData(internal, component)
 
 	local denseIndex = componentData.sparse[entity]
 	if not denseIndex then
@@ -194,14 +291,16 @@ end
 local function has<T>(self: World, entity: EntityId, component: ComponentId<T>): boolean
 	local internal = self :: any
 	local mask = internal.entities[entity]
+	if not mask then
+		return false
+	end
 
-	return mask and mask[component] ~= nil
+	return mask[component] ~= nil
 end
 
 local function remove<T>(self: World, entity: EntityId, component: ComponentId<T>)
 	local internal = self :: any
-	local componentData = internal.components[component]
-	assert(componentData, "componentData not found for: " .. component:: any)
+	local componentData = getComponentData(internal, component)
 
 	local denseIndex = componentData.sparse[entity]
 	if not denseIndex then
@@ -227,10 +326,12 @@ local function remove<T>(self: World, entity: EntityId, component: ComponentId<T
 	end
 end
 
-local function assign<T>(self: World, entity: EntityId, component: ComponentId<T>, value: T)
+local function assign<T>(self: World, entity: EntityId, component: DataComponentId<T>, value: T)
 	local internal = self :: any
-	local componentData = internal.components[component]
-	assert(componentData, "componentData not found for: " .. component:: any)
+	local componentData = getComponentData(internal, component)
+	if getComponentKind(internal, component) == "tag" then
+		return
+	end
 
 	if internal.entities[entity][component] then
 		componentData.dense[componentData.sparse[entity]] = value
@@ -248,10 +349,12 @@ local function assign<T>(self: World, entity: EntityId, component: ComponentId<T
 	end
 end
 
-local function attach<T>(self: World, entity: EntityId, component: ComponentId<T>)
+local function attach(self: World, entity: EntityId, component: TagComponentId)
 	local internal = self :: any
-	local componentData = internal.components[component]
-	assert(componentData, "componentData not found for: " .. component:: any)
+	local componentData = getComponentData(internal, component)
+	if getComponentKind(internal, component) == "data" then
+		return
+	end
 
 	if internal.entities[entity][component] then
 		return
@@ -269,13 +372,15 @@ local function attach<T>(self: World, entity: EntityId, component: ComponentId<T
 	end
 end
 
-local function update<T>(self: World, entity: EntityId, component: ComponentId<T>, fn: (T) -> T)
+local function update<T>(self: World, entity: EntityId, component: DataComponentId<T>, fn: (T) -> T)
 	local internal = self :: any
-	local componentData = internal.components[component]
-	assert(componentData, "componentData not found for: " .. component:: any)
+	local componentData = getComponentData(internal, component)
+	if getComponentKind(internal, component) == "tag" then
+		return
+	end
 
 	local denseIndex = componentData.sparse[entity]
-	assert(denseIndex, "Entity does not have component: " .. component:: any)
+	assert(denseIndex, "Entity does not have component: " .. tostring(component))
 
 	local newValue = fn(componentData.dense[denseIndex] :: T)
 	componentData.dense[denseIndex] = newValue
@@ -291,8 +396,10 @@ local function exists(self: World, entity: EntityId): boolean
 	return internal.entities[entity] ~= nil
 end
 
-local function onAssign(
-	self: World, component: number, fn: (entity: number, value: any) -> ()
+local function onAssign<T>(
+	self: World,
+	component: ComponentId<T>,
+	fn: (entity: EntityId, value: T) -> ()
 ): () -> ()
 	local internal = self :: any
 	local bucket: SignalBucket = internal._assignSignals[component] or {}
@@ -300,28 +407,32 @@ local function onAssign(
 	internal._nextId += 1
 
 	local id = internal._nextId
-	bucket[id] = fn:: any
+	bucket[id] = fn :: any
 
 	return function()
 		bucket[id] = nil
 	end
 end
 
-local function onRemove(self: World, component: number, fn: (entity: number) -> ()): () -> ()
+local function onRemove<T>(
+	self: World,
+	component: ComponentId<T>,
+	fn: (entity: EntityId) -> ()
+): () -> ()
 	local internal = self :: any
 	local bucket: SignalBucket = internal._removeSignals[component] or {}
 	internal._removeSignals[component] = bucket
 	internal._nextId += 1
 
 	local id = internal._nextId
-	bucket[id] = fn:: any
+	bucket[id] = fn :: any
 
 	return function()
 		bucket[id] = nil
 	end
 end
 
-local function onDestroy(self: World, fn: (entity: number) -> ()): () -> ()
+local function onDestroy(self: World, fn: (entity: EntityId) -> ()): () -> ()
 	local internal = self :: any
 	internal._nextId += 1
 
@@ -333,7 +444,7 @@ local function onDestroy(self: World, fn: (entity: number) -> ()): () -> ()
 	end
 end
 
-local function createView(self: World, ...: ComponentId<any>)
+local function createView(self: World, ...: ComponentId<any>): View<any>
 	local internal = self :: any
 	local componentIds = { ... }
 	local numComponents = #componentIds
@@ -346,7 +457,7 @@ local function createView(self: World, ...: ComponentId<any>)
 
 	for i, componentId in componentIds do
 		local componentData = internal.components[componentId]
-		assert(componentData, "Component does not exist: " .. componentId:: any)
+		assert(componentData, "Component does not exist: " .. tostring(componentId))
 
 		componentPools[i] = componentData
 		local size = #componentData.entities
@@ -359,9 +470,9 @@ local function createView(self: World, ...: ComponentId<any>)
 	local excludedPools: { Component } = {}
 	local world = self
 
-	local view = {} :: View
+	local view = {} :: View<any>
 
-	function view:forEach(fn: (...any) -> ())
+	function view:forEach(fn: (EntityId, ...any) -> ())
 		local numExclusions = #excludedPools
 		local entities = smallestPool.entities
 		local entitiesCount = #entities
@@ -455,7 +566,7 @@ local function createView(self: World, ...: ComponentId<any>)
 		end
 	end
 
-	function view:exclude(...: ComponentId<any>): View
+	function view:exclude(...: AnyComponentId): View<any>
 		for _, componentId in { ... } do
 			local pool = (world :: any).components[componentId]
 			if pool then
@@ -577,6 +688,7 @@ local function world(): World
 		nextComponentId = 1,
 		openEntityIds = {},
 		components = {},
+		componentKinds = {},
 		entities = {},
 		_assignSignals = {},
 		_removeSignals = {},
@@ -585,6 +697,7 @@ local function world(): World
 		_queue = {},
 
 		component = createComponent,
+		tag = createTag,
 		entity = createEntity,
 		destroy = destroyEntity,
 		exists = exists,
