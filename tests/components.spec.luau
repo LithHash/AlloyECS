@@ -90,4 +90,36 @@ describe("components", function()
 
 		expect(world:read(entity, Tag)).toBe(true)
 	end)
+
+	it("mutation APIs assert on destroyed entities", function()
+		local world = AlloyECS.world()
+		local Data = world:component()
+		local Tag = world:tag()
+		local entity = world:entity()
+
+		world:destroy(entity)
+
+		local okAssign = pcall(function()
+			world:assign(entity, Data, 10)
+		end)
+
+		local okAttach = pcall(function()
+			world:attach(entity, Tag)
+		end)
+
+		local okRemove = pcall(function()
+			world:remove(entity, Data)
+		end)
+
+		local okUpdate = pcall(function()
+			world:update(entity, Data, function(current)
+				return current
+			end)
+		end)
+
+		expect(okAssign).toBe(false)
+		expect(okAttach).toBe(false)
+		expect(okRemove).toBe(false)
+		expect(okUpdate).toBe(false)
+	end)
 end)

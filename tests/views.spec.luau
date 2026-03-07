@@ -99,4 +99,40 @@ describe("views", function()
 		expect(#entities).toBe(1)
 		expect(entities[1]).toBe(entity)
 	end)
+
+	it("exclude returns a derived immutable view", function()
+		local world = AlloyECS.world()
+		local Active = world:tag()
+		local Hidden = world:tag()
+		local first = world:entity()
+		local second = world:entity()
+
+		world:attach(first, Active)
+		world:attach(second, Active)
+		world:attach(second, Hidden)
+
+		local baseView = world:view(Active)
+		local filtered = baseView:exclude(Hidden)
+
+		expect(baseView:count()).toBe(2)
+		expect(filtered:count()).toBe(1)
+	end)
+
+	it("entities returns a snapshot", function()
+		local world = AlloyECS.world()
+		local Active = world:tag()
+		local first = world:entity()
+		local second = world:entity()
+
+		world:attach(first, Active)
+		world:attach(second, Active)
+
+		local view = world:view(Active)
+		local firstSnapshot = view:entities()
+		firstSnapshot[1] = 999999
+
+		local secondSnapshot = view:entities()
+		expect(secondSnapshot[1]).toBe(first)
+		expect(secondSnapshot[2]).toBe(second)
+	end)
 end)
