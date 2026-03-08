@@ -100,8 +100,7 @@ export type World = {
 			componentF: ComponentId<F>,
 			componentG: ComponentId<G>,
 			componentH: ComponentId<H>
-		) -> View<A, B, C, D, E, F, G, H>)
-		& (<T...>(self: World, ...ComponentId<any>) -> View<T...>),
+		) -> View<A, B, C, D, E, F, G, H>),
 
 	onAssign: <T>(
 		self: World,
