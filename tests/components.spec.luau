@@ -63,34 +63,6 @@ describe("components", function()
 		expect(world:has(entity, Tag)).toBe(true)
 	end)
 
-	it("attach on data components is a no-op", function()
-		local world = AlloyECS.world()
-		local Data = world:component()
-		local entity = world:entity()
-
-		world:attach(entity, Data :: any)
-
-		expect(world:read(entity, Data)).toBeNil()
-		expect(world:has(entity, Data)).toBe(false)
-	end)
-
-	it("assign and update on tag components are no-ops", function()
-		local world = AlloyECS.world()
-		local Tag = world:tag()
-		local entity = world:entity()
-		local tagAsAny = Tag :: any
-
-		world:assign(entity, tagAsAny, 123)
-		expect(world:read(entity, Tag)).toBeNil()
-
-		world:attach(entity, Tag)
-		world:update(entity, tagAsAny, function()
-			return false
-		end)
-
-		expect(world:read(entity, Tag)).toBe(true)
-	end)
-
 	it("mutation APIs assert on destroyed entities", function()
 		local world = AlloyECS.world()
 		local Data = world:component()
@@ -121,5 +93,24 @@ describe("components", function()
 		expect(okAttach).toBe(false)
 		expect(okRemove).toBe(false)
 		expect(okUpdate).toBe(false)
+	end)
+
+	it("allows components to contain data akin to entites", function()
+		local world = AlloyECS.world()
+
+		local humanoid = world:component()
+		local characterType = world:tag()
+
+		world:attach(humanoid, characterType)
+
+		expect(world:has(humanoid, characterType)).toBe(true)
+
+		local found = 0
+
+		world:view(characterType):forEach(function(entity: number, tag: true)
+			found += 1
+		end)
+
+		expect(found).toBe(1)
 	end)
 end)

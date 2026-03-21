@@ -76,30 +76,6 @@ describe("signals", function()
 		expect(destroyed).toBe(1)
 	end)
 
-	it("invalid kind operations do not emit assign signals", function()
-		local world = AlloyECS.world()
-		local Data = world:component()
-		local Tag = world:tag()
-		local entity = world:entity()
-		local calls = 0
-
-		world:onAssign(Data, function()
-			calls += 1
-		end)
-		world:onAssign(Tag, function()
-			calls += 1
-		end)
-
-		world:attach(entity, Data :: any)
-		world:assign(entity, Tag :: any, 10)
-		world:update(entity, Tag :: any, function()
-			return false
-		end)
-		world:flush()
-
-		expect(calls).toBe(0)
-	end)
-
 	it("keeps queued signal dispatch in FIFO order", function()
 		local world = AlloyECS.world()
 		local Value = world:component()
