@@ -166,6 +166,8 @@ local function flush(self: World)
 		return
 	end
 
+	internal._queue = {}
+
 	for i = 1, count do
 		local event = queue[i]
 		for _, fn in event.bucket do
@@ -174,8 +176,6 @@ local function flush(self: World)
 				print("AlloyECS observer callback failed")
 			end
 		end
-
-		queue[i] = nil :: any
 	end
 end
 
