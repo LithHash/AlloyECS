@@ -27,6 +27,19 @@ describe("components", function()
 		expect(world:read(entity, Health)).toBeNil()
 	end)
 
+	it("supports defaulted component creation", function()
+		local world = AlloyECS.world()
+		local Position = world:component({ x = 0, y = 0 })
+		local entity = world:entity()
+
+		world:assign(entity, Position, { x = 12, y = 30 })
+
+		local value = world:read(entity, Position)
+		expect(value).toBeDefined()
+		expect(value.x).toBe(12)
+		expect(value.y).toBe(30)
+	end)
+
 	it("updates an assigned component value", function()
 		local world = AlloyECS.world()
 		local Score = world:component()
@@ -61,6 +74,48 @@ describe("components", function()
 
 		expect(world:read(entity, Tag)).toBe(true)
 		expect(world:has(entity, Tag)).toBe(true)
+	end)
+
+	it("attach assigns defaults for defaulted data components", function()
+		local world = AlloyECS.world()
+		local Position = world:component({ x = 0, y = 0 })
+		local entity = world:entity()
+
+		world:attach(entity, Position)
+
+		local value = world:read(entity, Position)
+		expect(value).toBeDefined()
+		expect(value.x).toBe(0)
+		expect(value.y).toBe(0)
+	end)
+
+	it("attach clones table defaults per entity", function()
+		local world = AlloyECS.world()
+		local Position = world:component({ x = 0, y = 0 })
+		local first = world:entity()
+		local second = world:entity()
+
+		world:attach(first, Position)
+		world:attach(second, Position)
+
+		local firstValue = world:read(first, Position)
+		local secondValue = world:read(second, Position)
+		firstValue.x = 100
+
+		expect(secondValue.x).toBe(0)
+		expect(secondValue.y).toBe(0)
+	end)
+
+	it("attach errors for non-default data components", function()
+		local world = AlloyECS.world()
+		local Position = world:component()
+		local entity = world:entity()
+
+		local ok = pcall(function()
+			world:attach(entity, Position)
+		end)
+
+		expect(ok).toBe(false)
 	end)
 
 	it("mutation APIs assert on destroyed entities", function()

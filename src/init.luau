@@ -12,17 +12,49 @@ export type Component = {
 	sparse: { [EntityId]: number },
 	dense: { [number]: any },
 	entities: { [number]: EntityId },
+	default: any?,
+	hasDefault: boolean,
+	kind: "data" | "tag",
 }
 
 export type ComponentMask = { [number]: boolean }
 
 export type View<T...> = {
 	forEach: (self: View<T...>, fn: (EntityId, T...) -> ()) -> (),
+	cancel: (self: View<T...>) -> (),
 	exclude: (self: View<T...>, ...AnyComponentId) -> View<T...>,
+	whichIs: (self: View<T...>, ...any) -> View<T...>,
 	count: (self: View<T...>) -> number,
 	entities: (self: View<T...>) -> { EntityId },
 	empty: (self: View<T...>) -> boolean,
 }
+
+type ViewIteration = {
+	cancelled: boolean,
+}
+
+type ViewInternal = {
+	_world: World,
+	_componentIds: { ComponentId<any> },
+	_componentPools: { Component },
+	_excludedPools: { Component },
+	_expectedValues: { any }?,
+	_numComponents: number,
+	_smallestPool: Component,
+	_activeIteration: ViewIteration?,
+}
+
+type ViewMethodTable = {
+	cancel: <T...>(self: View<T...>) -> (),
+	forEach: <T...>(self: View<T...>, fn: (EntityId, T...) -> ()) -> (),
+	exclude: <T...>(self: View<T...>, ...AnyComponentId) -> View<T...>,
+	whichIs: <T...>(self: View<T...>, ...any) -> View<T...>,
+	count: <T...>(self: View<T...>) -> number,
+	entities: <T...>(self: View<T...>) -> { EntityId },
+	empty: <T...>(self: View<T...>) -> boolean,
+}
+
+type ViewObject = ViewInternal & ViewMethodTable
 
 export type World = {
 	nextEntityId: number,
@@ -36,13 +68,13 @@ export type World = {
 	_nextId: number,
 	_queue: { QueuedEvent },
 
-	component: <T>(self: World) -> DataComponentId<T>,
+	component: ((self: World) -> DataComponentId<any>) & (<T>(self: World, defaultValue: T) -> DataComponentId<T>),
 	tag: (self: World) -> TagComponentId,
 	entity: (self: World) -> EntityId,
-	destroy: (self: World, entity: EntityId) -> (),
-	exists: (self: World, entity: EntityId) -> boolean,
+	destroy: (self: World, id: EntityId) -> (),
+	exists: (self: World, id: EntityId) -> boolean,
 	assign: <T>(self: World, entity: EntityId, component: DataComponentId<T>, value: T) -> (),
-	attach: (self: World, entity: EntityId, component: TagComponentId) -> (),
+	attach: (self: World, entity: EntityId, component: AnyComponentId) -> (),
 	remove: <T>(self: World, entity: EntityId, component: ComponentId<T>) -> (),
 	read: <T>(self: World, entity: EntityId, component: ComponentId<T>) -> T?,
 	has: <T>(self: World, entity: EntityId, component: ComponentId<T>) -> boolean,
@@ -109,11 +141,11 @@ export type World = {
 
 	onAssign: <T>(
 		self: World,
-		component: ComponentId<T>,
-		fn: (entity: EntityId, value: T) -> ()
+		id: ComponentId<T>,
+		fn: (id: EntityId, value: T) -> ()
 	) -> () -> (),
-	onRemove: <T>(self: World, component: ComponentId<T>, fn: (entity: EntityId) -> ()) -> () -> (),
-	onDestroy: (self: World, fn: (entity: EntityId) -> ()) -> () -> (),
+	onRemove: <T>(self: World, id: ComponentId<T>, fn: (id: EntityId) -> ()) -> () -> (),
+	onDestroy: (self: World, fn: (id: EntityId) -> ()) -> () -> (),
 	flush: (self: World) -> (),
 }
 
@@ -151,25 +183,74 @@ end
 
 local function cloneArray<T>(source: { T }): { T }
 	local result = tableCreate(#source)
-	for i = 1, #source do
-		result[i] = source[i]
+	for sourceIndex = 1, #source do
+		result[sourceIndex] = source[sourceIndex]
 	end
 
 	return result
 end
 
+local function cloneDefaultValue<T>(value: T): T
+	if type(value) == "table" then
+		return table.clone(value :: any) :: T
+	end
+
+	return value
+end
+
+local function valuesMatch(left: any, right: any, seen: { [any]: { [any]: boolean } }?): boolean
+	if left == right then
+		return true
+	end
+
+	if type(left) ~= type(right) then
+		return false
+	end
+
+	if type(left) ~= "table" then
+		return false
+	end
+
+	local visited = (seen or {}) :: any
+	local leftSeen = visited[left] :: { [any]: boolean }?
+	if leftSeen and leftSeen[right] then
+		return true
+	end
+
+	if not leftSeen then
+		leftSeen = {}
+		visited[left] = leftSeen
+	end
+
+	local rightSeen = leftSeen :: { [any]: boolean }
+	rightSeen[right] = true
+
+	for key, leftValue in left do
+		if not valuesMatch(leftValue, right[key], visited :: any) then
+			return false
+		end
+	end
+
+	for key in right do
+		if left[key] == nil then
+			return false
+		end
+	end
+
+	return true
+end
+
 local function flush(self: World)
-	local internal = self :: any
-	local queue: { QueuedEvent } = internal._queue
+	local queue = self._queue
 	local count = #queue
 	if count == 0 then
 		return
 	end
 
-	internal._queue = {}
+	self._queue = {}
 
-	for i = 1, count do
-		local event = queue[i]
+	for queueIndex = 1, count do
+		local event = queue[queueIndex]
 		for _, fn in event.bucket do
 			local ok = pcall(fn, event.entity, event.value)
 			if not ok then
@@ -179,14 +260,14 @@ local function flush(self: World)
 	end
 end
 
-local function createComponent<T>(self: World): DataComponentId<T>
+local function createComponent<T>(self: World, defaultValue: T?): DataComponentId<T>
 	local entityId: EntityId
 	local openIds = self.openEntityIds
-	local n = #openIds
+	local openIdCount = #openIds
 
-	if n > 0 then
-		entityId = openIds[n]
-		openIds[n] = nil
+	if openIdCount > 0 then
+		entityId = openIds[openIdCount]
+		openIds[openIdCount] = nil
 	else
 		entityId = self.nextEntityId
 		self.nextEntityId += 1
@@ -196,6 +277,9 @@ local function createComponent<T>(self: World): DataComponentId<T>
 		sparse = {},
 		dense = {},
 		entities = {},
+		default = defaultValue,
+		hasDefault = defaultValue ~= nil,
+		kind = "data",
 	}
 
 	self.entities[entityId] = {}
@@ -207,11 +291,11 @@ end
 local function createTag(self: World): TagComponentId
 	local entityId: number
 	local openIds = self.openEntityIds
-	local n = #openIds
+	local openIdCount = #openIds
 
-	if n > 0 then
-		entityId = openIds[n]
-		openIds[n] = nil
+	if openIdCount > 0 then
+		entityId = openIds[openIdCount]
+		openIds[openIdCount] = nil
 	else
 		entityId = self.nextEntityId
 		self.nextEntityId += 1
@@ -221,6 +305,9 @@ local function createTag(self: World): TagComponentId
 		sparse = {},
 		dense = {},
 		entities = {},
+		default = nil,
+		hasDefault = false,
+		kind = "tag",
 	}
 
 	self.entities[entityId] = {}
@@ -232,11 +319,11 @@ end
 local function createEntity(self: World): EntityId
 	local entityId: number
 	local openIds = self.openEntityIds
-	local n = #openIds
+	local openIdCount = #openIds
 
-	if n > 0 then
-		entityId = openIds[n]
-		openIds[n] = nil
+	if openIdCount > 0 then
+		entityId = openIds[openIdCount]
+		openIds[openIdCount] = nil
 	else
 		entityId = self.nextEntityId
 		self.nextEntityId += 1
@@ -247,8 +334,8 @@ local function createEntity(self: World): EntityId
 	return entityId
 end
 
-local function destroyEntity(self: World, entity: EntityId)
-	local entityData = self.entities[entity]
+local function destroyEntity(self: World, id: EntityId)
+	local entityData = self.entities[id]
 	if not entityData then
 		return
 	end
@@ -262,10 +349,10 @@ local function destroyEntity(self: World, entity: EntityId)
 		end
 
 		if removeSignals[component] then
-			queueEvent(self, removeSignals[component], entity, nil)
+			queueEvent(self, removeSignals[component], id, nil)
 		end
 
-		local denseIndex = componentData.sparse[entity]
+		local denseIndex = componentData.sparse[id]
 		local denseSize = #componentData.dense
 		local lastEntity = componentData.entities[denseSize]
 
@@ -277,16 +364,16 @@ local function destroyEntity(self: World, entity: EntityId)
 
 		componentData.dense[denseSize] = nil
 		componentData.entities[denseSize] = nil
-		componentData.sparse[entity] = nil
+		componentData.sparse[id] = nil
 	end
 
-	self.entities[entity] = nil
+	self.entities[id] = nil
 
 	local openIds = self.openEntityIds
-	openIds[#openIds + 1] = entity
+	openIds[#openIds + 1] = id
 
 	if next(self._destroySignals) then
-		queueEvent(self, self._destroySignals, entity, nil)
+		queueEvent(self, self._destroySignals, id, nil)
 	end
 end
 
@@ -358,11 +445,17 @@ local function assign<T>(self: World, entity: EntityId, component: DataComponent
 	end
 end
 
-local function attach(self: World, entity: EntityId, component: TagComponentId)
+local function attach(self: World, entity: EntityId, component: AnyComponentId)
 	local entityData = getEntityData(self, entity)
 	local componentData = getComponentData(self, component)
 
 	if entityData[component] then
+		return
+	end
+
+	if componentData.kind == "data" then
+		assert(componentData.hasDefault, `Cannot attach non-default data component {component}`)
+		assign(self, entity, component :: DataComponentId<any>, cloneDefaultValue(componentData.default))
 		return
 	end
 
@@ -399,39 +492,39 @@ end
 
 local function onAssign<T>(
 	self: World,
-	component: ComponentId<T>,
-	fn: (entity: EntityId, value: T) -> ()
+	id: ComponentId<T>,
+	fn: (id: EntityId, value: T) -> ()
 ): () -> ()
-	local bucket: SignalBucket = self._assignSignals[component] or {}
-	self._assignSignals[component] = bucket
+	local bucket: SignalBucket = self._assignSignals[id] or {}
+	self._assignSignals[id] = bucket
 	self._nextId += 1
 
-	local id = self._nextId
-	bucket[id] = fn :: any
+	local observerId = self._nextId
+	bucket[observerId] = fn :: any
 
 	return function()
-		bucket[id] = nil
+		bucket[observerId] = nil
 	end
 end
 
 local function onRemove<T>(
 	self: World,
-	component: ComponentId<T>,
-	fn: (entity: EntityId) -> ()
+	id: ComponentId<T>,
+	fn: (id: EntityId) -> ()
 ): () -> ()
-	local bucket: SignalBucket = self._removeSignals[component] or {}
-	self._removeSignals[component] = bucket
+	local bucket: SignalBucket = self._removeSignals[id] or {}
+	self._removeSignals[id] = bucket
 	self._nextId += 1
 
-	local id = self._nextId
-	bucket[id] = fn :: any
+	local observerId = self._nextId
+	bucket[observerId] = fn :: any
 
 	return function()
-		bucket[id] = nil
+		bucket[observerId] = nil
 	end
 end
 
-local function onDestroy(self: World, fn: (entity: EntityId) -> ()): () -> ()
+local function onDestroy(self: World, fn: (...any) -> ()): () -> ()
 	self._nextId += 1
 
 	local id = self._nextId
@@ -445,7 +538,8 @@ end
 local function createViewInternal<T...>(
 	self: World,
 	componentIds: { ComponentId<any> },
-	excludedPools: { Component }
+	excludedPools: { Component },
+	matchedValues: { any }?
 ): View<T...>
 	local numComponents = #componentIds
 
@@ -455,11 +549,11 @@ local function createViewInternal<T...>(
 	local smallestPool: Component = nil :: any
 	local smallestSize = math.huge
 
-	for i, componentId in componentIds do
+	for componentIndex, componentId in componentIds do
 		local componentData = self.components[componentId]
 		assert(componentData, "Component does not exist: " .. tostring(componentId))
 
-		componentPools[i] = componentData
+		componentPools[componentIndex] = componentData
 		local size = #componentData.entities
 		if size < smallestSize then
 			smallestSize = size
@@ -467,228 +561,146 @@ local function createViewInternal<T...>(
 		end
 	end
 
-	local world = self
+	local view: ViewObject = {
+		_world = self,
+		_componentIds = componentIds,
+		_componentPools = componentPools,
+		_excludedPools = excludedPools,
+		_expectedValues = matchedValues,
+		_numComponents = numComponents,
+		_smallestPool = smallestPool,
+		_activeIteration = nil,
 
-	local view = {} :: View<T...>
+		cancel = viewCancel,
+		forEach = viewForEach,
+		exclude = viewExclude,
+		whichIs = viewWhichIs,
+		count = viewCount,
+		entities = viewEntities,
+		empty = viewEmpty,
+	}
 
-	function view:forEach(fn: (EntityId, ...any) -> ())
-		local numExclusions = #excludedPools
-		local entities = smallestPool.entities
-		local entitiesCount = #entities
+	return view :: View<T...>
+end
 
-		if numComponents == 1 then
-			local pool = componentPools[1]
-			local dense = pool.dense
+local function getViewInternal<T...>(self: View<T...>): ViewInternal
+	return self :: ViewInternal
+end
 
-			if numExclusions == 0 then
-				for i = 1, entitiesCount do
-					fn(entities[i], dense[i])
-				end
-			else
-				for i = 1, entitiesCount do
-					local entity = entities[i]
-					local isExcluded = false
+function viewCancel<T...>(self: View<T...>)
+	local iteration = getViewInternal(self)._activeIteration
+	if iteration then
+		iteration.cancelled = true
+	end
+end
 
-					for j = 1, numExclusions do
-						if excludedPools[j].sparse[entity] then
-							isExcluded = true
-							break
-						end
-					end
+local function viewEntityMatches(self: ViewInternal, entity: EntityId, values: { any }): boolean
+	for excludedPoolIndex = 1, #self._excludedPools do
+		if self._excludedPools[excludedPoolIndex].sparse[entity] then
+			return false
+		end
+	end
 
-					if not isExcluded then
-						fn(entity, dense[i])
-					end
-				end
-			end
+	local expectedValues = self._expectedValues
+	local numComponents = self._numComponents
 
-			return
+	if expectedValues and #expectedValues ~= numComponents then
+		return false
+	end
+
+	for componentIndex = 1, numComponents do
+		local pool = self._componentPools[componentIndex]
+		local denseIndex = pool.sparse[entity]
+		if not denseIndex then
+			return false
 		end
 
-		local components = tableCreate(numComponents)
+		local value = pool.dense[denseIndex]
+		if expectedValues and not valuesMatch(expectedValues[componentIndex], value) then
+			return false
+		end
 
-		if numExclusions == 0 then
-			for i = 1, entitiesCount do
-				local entity = entities[i]
-				local hasAll = true
+		values[componentIndex] = value
+	end
 
-				for j = 1, numComponents do
-					local pool = componentPools[j]
-					local denseIndex = pool.sparse[entity]
+	return true
+end
 
-					if not denseIndex then
-						hasAll = false
-						break
-					end
+local function iterateView(self: ViewInternal, onMatch: (EntityId, { any }) -> ())
+	local previousIteration = self._activeIteration
+	local iteration = { cancelled = false }
+	self._activeIteration = iteration
 
-					components[j] = pool.dense[denseIndex]
-				end
+	local values = tableCreate(self._numComponents)
+	local entities = self._smallestPool.entities
 
-				if hasAll then
-					fn(entity, tableUnpack(components, 1, numComponents))
-				end
-			end
-		else
-			for i = 1, entitiesCount do
-				local entity = entities[i]
-				local isExcluded = false
-
-				for j = 1, numExclusions do
-					if excludedPools[j].sparse[entity] then
-						isExcluded = true
-						break
-					end
-				end
-
-				if isExcluded then
-					continue
-				end
-
-				local hasAll = true
-
-				for j = 1, numComponents do
-					local pool = componentPools[j]
-					local denseIndex = pool.sparse[entity]
-
-					if not denseIndex then
-						hasAll = false
-						break
-					end
-
-					components[j] = pool.dense[denseIndex]
-				end
-
-				if hasAll then
-					fn(entity, tableUnpack(components, 1, numComponents))
-				end
+	for entityIndex = 1, #entities do
+		local entity = entities[entityIndex]
+		if viewEntityMatches(self, entity, values) then
+			onMatch(entity, values)
+			if iteration.cancelled then
+				break
 			end
 		end
 	end
 
-	function view:exclude(...: AnyComponentId): View<T...>
-		local nextExcludedPools = cloneArray(excludedPools)
+	self._activeIteration = previousIteration
+end
 
-		for _, componentId in { ... } do
-			local pool = (world :: any).components[componentId]
-			if pool then
-				nextExcludedPools[#nextExcludedPools + 1] = pool
-			end
+function viewForEach<T...>(self: View<T...>, fn: (EntityId, T...) -> ())
+	local internal = getViewInternal(self)
+	iterateView(internal, function(entity, values)
+		(fn :: any)(entity, tableUnpack(values, 1, internal._numComponents))
+	end)
+end
+
+function viewExclude<T...>(self: View<T...>, ...: AnyComponentId): View<T...>
+	local internal = getViewInternal(self)
+	local nextExcludedPools = cloneArray(internal._excludedPools)
+
+	for _, id in { ... } do
+		local pool = internal._world.components[id]
+		if pool then
+			nextExcludedPools[#nextExcludedPools + 1] = pool
 		end
-
-		return createViewInternal(world, componentIds, nextExcludedPools)
 	end
 
-	function view:count(): number
-		local count = 0
-		local numExclusions = #excludedPools
-		local entities = smallestPool.entities
-		local entitiesCount = #entities
+	return createViewInternal(internal._world, internal._componentIds, nextExcludedPools, internal._expectedValues)
+end
 
-		if numComponents == 1 and numExclusions == 0 then
-			return entitiesCount
-		end
+function viewWhichIs<T...>(self: View<T...>, ...: any): View<T...>
+	local internal = getViewInternal(self)
+	return createViewInternal(internal._world, internal._componentIds, internal._excludedPools, { ... })
+end
 
-		for i = 1, entitiesCount do
-			local entity = entities[i]
-			local isExcluded = false
+function viewCount<T...>(self: View<T...>): number
+	local internal = getViewInternal(self)
+	local count = 0
 
-			for j = 1, numExclusions do
-				if excludedPools[j].sparse[entity] then
-					isExcluded = true
-					break
-				end
-			end
+	iterateView(internal, function()
+		count += 1
+	end)
 
-			if not isExcluded then
-				local hasAll = true
+	return count
+end
 
-				for j = 1, numComponents do
-					if not componentPools[j].sparse[entity] then
-						hasAll = false
-						break
-					end
-				end
+function viewEntities<T...>(self: View<T...>): { EntityId }
+	local internal = getViewInternal(self)
+	local result: { EntityId } = {}
 
-				if hasAll then
-					count += 1
-				end
-			end
-		end
+	iterateView(internal, function(entity)
+		result[#result + 1] = entity
+	end)
 
-		return count
-	end
+	return result
+end
 
-	function view:entities(): { EntityId }
-		local result: { EntityId } = {}
-		local numExclusions = #excludedPools
-		local entities = smallestPool.entities
-		local entitiesCount = #entities
-
-		if numExclusions == 0 then
-			if numComponents == 1 then
-				for i = 1, entitiesCount do
-					result[i] = entities[i]
-				end
-
-				return result
-			end
-
-			for i = 1, entitiesCount do
-				local entity = entities[i]
-				local hasAll = true
-
-				for j = 1, numComponents do
-					if not componentPools[j].sparse[entity] then
-						hasAll = false
-						break
-					end
-				end
-
-				if hasAll then
-					result[#result + 1] = entity
-				end
-			end
-		else
-			for i = 1, entitiesCount do
-				local entity = entities[i]
-				local isExcluded = false
-
-				for j = 1, numExclusions do
-					if excludedPools[j].sparse[entity] then
-						isExcluded = true
-						break
-					end
-				end
-
-				if not isExcluded then
-					local hasAll = true
-
-					for j = 1, numComponents do
-						if not componentPools[j].sparse[entity] then
-							hasAll = false
-							break
-						end
-					end
-
-					if hasAll then
-						result[#result + 1] = entity
-					end
-				end
-			end
-		end
-
-		return result
-	end
-
-	function view:empty(): boolean
-		return view:count() == 0
-	end
-
-	return view
+function viewEmpty<T...>(self: View<T...>): boolean
+	return viewCount(self) == 0
 end
 
 local function createView<T...>(self: World, ...: ComponentId<any>): View<T...>
-	return createViewInternal(self, { ... }, {})
+	return createViewInternal(self, { ... }, {}, nil)
 end
 
 local function world(): World
@@ -722,7 +734,7 @@ local function world(): World
 		flush = flush,
 	}
 
-	return self :: any
+	return self :: World
 end
 
 return {
