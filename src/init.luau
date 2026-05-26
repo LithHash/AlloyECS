@@ -353,6 +353,10 @@ local function destroyEntity(self: World, id: EntityId)
 		end
 
 		local denseIndex = componentData.sparse[id]
+		if not denseIndex then
+			continue
+		end
+
 		local denseSize = #componentData.dense
 		local lastEntity = componentData.entities[denseSize]
 
