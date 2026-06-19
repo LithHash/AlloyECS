@@ -363,7 +363,12 @@ local function destroyEntity(self: World, id: EntityId)
 		if denseIndex ~= denseSize then
 			componentData.dense[denseIndex] = componentData.dense[denseSize]
 			componentData.entities[denseIndex] = lastEntity
-			componentData.sparse[lastEntity] = denseIndex
+
+			if lastEntity then
+				componentData.sparse[lastEntity] = denseIndex
+			else
+				warn(`AlloyECS had trouble cleaning up component {component} while destroying entity {id}. This usually happens when nil is assigned as a component value. Use world:remove(entity, component) instead of assigning nil.`)
+			end
 		end
 
 		componentData.dense[denseSize] = nil
@@ -416,7 +421,12 @@ local function remove<T>(self: World, entity: EntityId, component: ComponentId<T
 	if denseIndex ~= denseSize then
 		componentData.dense[denseIndex] = componentData.dense[denseSize]
 		componentData.entities[denseIndex] = lastEntity
-		componentData.sparse[lastEntity] = denseIndex
+
+		if lastEntity then
+			componentData.sparse[lastEntity] = denseIndex
+		else
+			warn(`AlloyECS had trouble removing component {component} from entity {entity}. This usually happens when nil is assigned as a component value. Use world:remove(entity, component) instead of assigning nil.`)
+		end
 	end
 
 	componentData.dense[denseSize] = nil
